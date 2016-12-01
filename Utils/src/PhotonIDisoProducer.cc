@@ -76,6 +76,7 @@ PhotonIDisoProducer::PhotonIDisoProducer(const edm::ParameterSet& iConfig):
   produces< std::vector< double > >("passElectronVeto"); 
   produces< std::vector< bool > >("hadronization");
   produces< std::vector< bool > >("nonPrompt");
+  produces< std::vector< bool > >("fullID");
 }
 
 
@@ -99,26 +100,26 @@ PhotonIDisoProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSetup)
 
   using namespace edm;
   
-  std::auto_ptr< std::vector< pat::Photon > > goodPhotons ( new std::vector< pat::Photon >() );
-  std::auto_ptr< std::vector< double > > photon_isEB( new std::vector< double > () );
-  std::auto_ptr< std::vector< double > > photon_genMatched( new std::vector< double > () );
-  std::auto_ptr< std::vector< double > > photon_hadTowOverEM( new std::vector< double > () );
-  std::auto_ptr< std::vector< double > > photon_sigmaIetaIeta( new std::vector< double > () );
-  std::auto_ptr< std::vector< double > > photon_pfGammaIso( new std::vector< double > () );
-  std::auto_ptr< std::vector< double > > photon_pfChargedIso( new std::vector< double > () );
-  std::auto_ptr< std::vector< double > > photon_pfNeutralIso( new std::vector< double > () );
-  std::auto_ptr< std::vector< double > > photon_pfGammaIsoRhoCorr( new std::vector< double > () );
-  std::auto_ptr< std::vector< double > > photon_pfChargedIsoRhoCorr( new std::vector< double > () );
-  std::auto_ptr< std::vector< double > > photon_pfNeutralIsoRhoCorr( new std::vector< double > () );
-  std::auto_ptr< std::vector< double > > photon_hasPixelSeed( new std::vector< double > () );
-  std::auto_ptr< std::vector< double > > photon_passElectronVeto( new std::vector< double > () );
-  std::auto_ptr< std::vector< bool > >   photon_hadronization( new std::vector< bool > () );
-  std::auto_ptr< std::vector< bool > >   photon_nonPrompt ( new std::vector< bool > () );
+  auto goodPhotons  = std::make_unique<std::vector<pat::Photon>>();
+  auto photon_isEB = std::make_unique<std::vector<double>>();
+  auto photon_genMatched = std::make_unique<std::vector<double>>();
+  auto photon_hadTowOverEM = std::make_unique<std::vector<double>>();
+  auto photon_sigmaIetaIeta = std::make_unique<std::vector<double>>();
+  auto photon_pfGammaIso = std::make_unique<std::vector<double>>();
+  auto photon_pfChargedIso = std::make_unique<std::vector<double>>();
+  auto photon_pfNeutralIso = std::make_unique<std::vector<double>>();
+  auto photon_pfGammaIsoRhoCorr = std::make_unique<std::vector<double>>();
+  auto photon_pfChargedIsoRhoCorr = std::make_unique<std::vector<double>>();
+  auto photon_pfNeutralIsoRhoCorr = std::make_unique<std::vector<double>>();
+  auto photon_hasPixelSeed = std::make_unique<std::vector<double>>();
+  auto photon_passElectronVeto = std::make_unique<std::vector<double>>();
+  auto   photon_hadronization = std::make_unique<std::vector<bool>>();
+  auto   photon_nonPrompt  = std::make_unique<std::vector<bool>>();
+  auto   photon_fullID  = std::make_unique<std::vector<bool>>();
 
   if( debug ){
     std::cout << "new events" << std::endl;
     std::cout << "===================" << std::endl;
-  
   }
   
   Handle< View< pat::Photon> > photonCands;
@@ -155,9 +156,7 @@ PhotonIDisoProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSetup)
   /// setup cluster tools
   noZS::EcalClusterLazyTools clusterTools_(iEvent, iSetup, ecalRecHitsInputTag_EB_Token_, ecalRecHitsInputTag_EE_Token_);
         
-  for( View< pat::Photon >::const_iterator iPhoton = photonCands->begin();
-        iPhoton != photonCands->end();
-        ++iPhoton){
+  for( View< pat::Photon >::const_iterator iPhoton = photonCands->begin(); iPhoton != photonCands->end(); ++iPhoton){
 
     if( debug ) {
       std::cout << "photon pt: " << iPhoton->pt() << std::endl;
@@ -173,10 +172,12 @@ PhotonIDisoProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSetup)
     double gamIso = effAreas.rhoCorrectedIso( pfGam , iPhoton->photonIso()        , iPhoton->eta() , rho ); 
 
     // apply photon selection -- all good photons will be saved
-	// use loose selection with no sieie or chiso cuts
+    // use loose selection with no sieie or chiso cuts
     bool isBarrelPhoton=false;
     bool isEndcapPhoton=false;
+    bool passID=false;
     bool passIDLoose=false;
+    bool passIso=false;
     bool passIsoLoose=false;
     bool passAcc=false;
 
@@ -198,38 +199,36 @@ PhotonIDisoProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSetup)
     }
     
     // apply id cuts
-    if(isBarrelPhoton){
-      //if(iPhoton->hadTowOverEm() < 0.028 && !hasMatchedPromptElectron(iPhoton->superCluster(),electrons, conversions, beamSpot->position()) && sieie < 0.0107){//id criterias barrel
-      //  passID=true;
-      //}//id criterias barrel
-      if(iPhoton->hadTowOverEm() < 0.028 && !hasMatchedPromptElectron(iPhoton->superCluster(),electrons, conversions, beamSpot->position())){//id criterias barrel (loose, no sieie cut)
-        passIDLoose=true;
-      }//id criterias barrel (loose)
-    } 
-    else if(isEndcapPhoton){
-      //if(iPhoton->hadTowOverEm() < 0.093 && !hasMatchedPromptElectron(iPhoton->superCluster(),electrons, conversions, beamSpot->position()) && sieie < 0.0272){//id criteria endcap
-      //  passID=true;
-      //}//id criterias endcap
-      if(iPhoton->hadTowOverEm() < 0.093 && !hasMatchedPromptElectron(iPhoton->superCluster(),electrons, conversions, beamSpot->position())){//id criteria endcap (loose, no sieie cut)
-        passIDLoose=true;
-      }//id criterias endcap (loose)
+    if (isBarrelPhoton) {
+      if (iPhoton->hadTowOverEm() < 0.05 && !hasMatchedPromptElectron(iPhoton->superCluster(), electrons, conversions, beamSpot->position())) {
+         passIDLoose = true;
+         if (sieie < 0.0102) {
+            passID = true;
+         }
+      }
+    } else if (isEndcapPhoton) {
+      if (iPhoton->hadTowOverEm() < 0.05 && !hasMatchedPromptElectron(iPhoton->superCluster(), electrons, conversions, beamSpot->position())) {
+         passIDLoose = true;
+         if (sieie < 0.0274) {
+            passID = true;
+         }
+      }
     }
  
     // apply isolation cuts
-    if(isBarrelPhoton){
-      //if(chIso <2.67 && nuIso <  (7.23 + TMath::Exp(0.0028*(iPhoton->pt()+0.5408)))  && gamIso < ( 2.11 + 0.0014*(iPhoton->pt())) ){
-      //  passIso=true;      
-      //}
-      if(nuIso <  (7.23 + TMath::Exp(0.0028*(iPhoton->pt()+0.5408)))  && gamIso < ( 2.11 + 0.0014*(iPhoton->pt())) ){//loose, no charged iso cut
-        passIsoLoose=true;      
+    if (isBarrelPhoton) {
+      if (nuIso < (1.92 + 0.014*iPhoton->pt() + 0.000019*iPhoton->pt()*iPhoton->pt()) && gamIso < (0.81 + 0.0053*iPhoton->pt())) {
+        passIsoLoose = true;
+        if (chIso < 3.32) {
+           passIso = true;
+        }
       }
-    }
-    else if(isEndcapPhoton){
-      //if(chIso <1.79 && nuIso <  (8.89 + 0.01725*(iPhoton->pt()))  && gamIso < ( 3.09 + 0.0091*(iPhoton->pt())) ){
-      //  passIso=true;
-      //}
-      if(nuIso <  (8.89 + 0.01725*(iPhoton->pt()))  && gamIso < ( 3.09 + 0.0091*(iPhoton->pt())) ){//loose, no charged iso cut
-        passIsoLoose=true;
+    } else if (isEndcapPhoton) {
+      if (nuIso < (11.86 + 0.0139*iPhoton->pt() + 0.000025*iPhoton->pt()*iPhoton->pt())  && gamIso < (0.83 + 0.0034*iPhoton->pt())) {
+        passIsoLoose = true;
+        if (chIso < 1.97) {
+          passIso = true;
+        }
       }
     }
 
@@ -248,7 +247,7 @@ PhotonIDisoProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSetup)
       photon_pfNeutralIsoRhoCorr->push_back( nuIso );
       photon_hasPixelSeed->push_back( iPhoton->hasPixelSeed() );
       photon_passElectronVeto->push_back( !hasMatchedPromptElectron(iPhoton->superCluster(),electrons, conversions, beamSpot->position()) );
-
+      photon_fullID->push_back(passID&&passIso);
 
       if (genParticles.isValid()){//genLevel Stuff
         // loop over gen particles and find nonprompt and hadronization photons
@@ -295,20 +294,21 @@ PhotonIDisoProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSetup)
     }//pure photons
 
   }// end loop over candidate photons
-  iEvent.put(goodPhotons); 
-  iEvent.put(photon_isEB , "isEB" );
-  iEvent.put(photon_genMatched , "genMatched" );
-  iEvent.put(photon_hadTowOverEM , "hadTowOverEM" );
-  iEvent.put(photon_sigmaIetaIeta , "sigmaIetaIeta" );
-  iEvent.put(photon_pfChargedIso , "pfChargedIso" );
-  iEvent.put(photon_pfNeutralIso , "pfNeutralIso" );
-  iEvent.put(photon_pfGammaIso , "pfGammaIso" );
-  iEvent.put(photon_pfChargedIsoRhoCorr , "pfChargedIsoRhoCorr" );
-  iEvent.put(photon_pfNeutralIsoRhoCorr , "pfNeutralIsoRhoCorr" );
-  iEvent.put(photon_pfGammaIsoRhoCorr , "pfGammaIsoRhoCorr" );
-  iEvent.put(photon_hasPixelSeed , "hasPixelSeed" );
-  iEvent.put(photon_passElectronVeto , "passElectronVeto" );
-  iEvent.put(photon_nonPrompt , "nonPrompt" );
+  iEvent.put(std::move(goodPhotons)); 
+  iEvent.put(std::move(photon_isEB ), "isEB" );
+  iEvent.put(std::move(photon_genMatched ), "genMatched" );
+  iEvent.put(std::move(photon_hadTowOverEM ), "hadTowOverEM" );
+  iEvent.put(std::move(photon_sigmaIetaIeta ), "sigmaIetaIeta" );
+  iEvent.put(std::move(photon_pfChargedIso ), "pfChargedIso" );
+  iEvent.put(std::move(photon_pfNeutralIso ), "pfNeutralIso" );
+  iEvent.put(std::move(photon_pfGammaIso ), "pfGammaIso" );
+  iEvent.put(std::move(photon_pfChargedIsoRhoCorr ), "pfChargedIsoRhoCorr" );
+  iEvent.put(std::move(photon_pfNeutralIsoRhoCorr ), "pfNeutralIsoRhoCorr" );
+  iEvent.put(std::move(photon_pfGammaIsoRhoCorr ), "pfGammaIsoRhoCorr" );
+  iEvent.put(std::move(photon_hasPixelSeed ), "hasPixelSeed" );
+  iEvent.put(std::move(photon_passElectronVeto ), "passElectronVeto" );
+  iEvent.put(std::move(photon_nonPrompt ), "nonPrompt" );
+  iEvent.put(std::move(photon_fullID ), "fullID" );
 
  
 }
@@ -317,9 +317,9 @@ PhotonIDisoProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSetup)
 //check if a given SuperCluster matches to at least one GsfElectron having zero expected inner hits
 //and not matching any conversion in the collection passing the quality cuts
 bool PhotonIDisoProducer::hasMatchedPromptElectron(const reco::SuperClusterRef &sc, const edm::Handle<std::vector<pat::Electron> > &eleCol,
-						   const edm::Handle<reco::ConversionCollection> &convCol, const math::XYZPoint &beamspot,
-						   float lxyMin, float probMin, unsigned int nHitsBeforeVtxMax) {
-
+                                                   const edm::Handle<reco::ConversionCollection> &convCol, const math::XYZPoint &beamspot,
+                                                   float lxyMin, float probMin, unsigned int nHitsBeforeVtxMax)
+{
   if (sc.isNull()) return false;
   for (std::vector<pat::Electron>::const_iterator it = eleCol->begin(); it!=eleCol->end(); ++it) {
     //match electron to supercluster

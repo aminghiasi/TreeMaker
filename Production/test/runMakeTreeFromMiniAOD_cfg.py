@@ -13,6 +13,7 @@ outfile=parameters.value("outfile","test_run")
 # background estimations on by default
 lostlepton=parameters.value("lostlepton", True)
 hadtau=parameters.value("hadtau", True)
+hadtaurecluster=parameters.value("hadtaurecluster", 1)
 doZinv=parameters.value("doZinv", True)
 
 # compute the PDF weights
@@ -31,22 +32,27 @@ scenario = Scenario(scenarioName)
 globaltag=parameters.value("globaltag",scenario.globaltag)
 tagname=parameters.value("tagname",scenario.tagname)
 geninfo=parameters.value("geninfo",scenario.geninfo)
+pmssm=parameters.value("pmssm",scenario.pmssm)
 fastsim=parameters.value("fastsim",scenario.fastsim)
 signal=parameters.value("signal",scenario.signal)
 jsonfile=parameters.value("jsonfile",scenario.jsonfile)
 jecfile=parameters.value("jecfile",scenario.jecfile)
 residual=parameters.value("residual",scenario.residual)
+jerfile=parameters.value("jerfile",scenario.jerfile)
+pufile=parameters.value("pufile",scenario.pufile)
 era=parameters.value("era",scenario.era)
+
+#temporary redirector fix
+#fastsim signal is phedexed to LPC Tier3
+redir=parameters.value("redir", "root://cmseos.fnal.gov/" if fastsim and signal else "root://cmsxrootd.fnal.gov/")
 
 # The process needs to be defined AFTER reading sys.argv,
 # otherwise edmConfigHash fails
 import FWCore.ParameterSet.Config as cms
 from Configuration.StandardSequences.Eras import eras
 process = cms.Process("RA2EventSelection")
-if era=="Run2_25ns":
-    process = cms.Process("RA2EventSelection",eras.Run2_25ns)
-elif era=="Run2_50ns":
-    process = cms.Process("RA2EventSelection",eras.Run2_50ns)
+if len(era)>0:
+    process = cms.Process("RA2EventSelection",getattr(eras,era))
 
 # configure geometry & conditions
 process.load("Configuration.StandardSequences.GeometryRecoDB_cff")
@@ -66,10 +72,6 @@ if inputFilesConfig!="" :
 if dataset!=[] :    
     readFiles.extend( [dataset] )
 
-#temporary redirector fix
-redir="root://cmsxrootd.fnal.gov/"
-#fastsim is phedexed to LPC Tier3
-if fastsim: redir="root://cmseos.fnal.gov/"
 for f,val in enumerate(readFiles):
     if readFiles[f][0:6]=="/store":
         readFiles[f] = redir+readFiles[f]
@@ -80,7 +82,7 @@ print " dataset: "+str(readFiles)
 print " outfile: "+outfile+"_RA2AnalysisTree"
 print " "
 print " storing lostlepton variables: "+str(lostlepton)
-print " storing hadtau variables: "+str(hadtau)
+print " storing hadtau variables: "+str(hadtau)+" w/ reclustering "+str(hadtaurecluster)
 print " storing Zinv variables: "+str(doZinv)
 print " "
 print " storing PDF weights: "+str(doPDFs)
@@ -88,14 +90,17 @@ print " "
 print " storing track debugging variables: "+str(debugtracks)
 print " Applying baseline selection filter: "+str(applybaseline)
 print " "
-if scenario.known: print " scenario: "+scenarioName
+print " scenario: "+scenarioName
 print " global tag: "+globaltag
 print " Instance name of tag information: "+tagname
 print " Including gen-level information: "+str(geninfo)
+print " Including pMSSM-related information: "+str(pmssm)
 print " Using fastsim settings: "+str(fastsim)
 print " Running signal uncertainties: "+str(signal)
 if len(jsonfile)>0: print " JSON file applied: "+jsonfile
 if len(jecfile)>0: print " JECs applied: "+jecfile+(" (residuals)" if residual else "")
+if len(jerfile)>0: print " JERs applied: "+jerfile
+if len(pufile)>0: print " PU weights stored: "+pufile
 print " era of this dataset: "+era
 print "************************************************"
 
@@ -107,15 +112,19 @@ process = makeTreeFromMiniAOD(process,
     globaltag=globaltag,
     numevents=numevents,
     hadtau=hadtau,
+    hadtaurecluster=hadtaurecluster,
     lostlepton=lostlepton,
     applybaseline=applybaseline,
     doZinv=doZinv,
     debugtracks=debugtracks,
     geninfo=geninfo,
+    pmssm=pmssm,
     tagname=tagname,
     jsonfile=jsonfile,
     jecfile=jecfile,
     residual=residual,
+    jerfile=jerfile,
+    pufile=pufile,
     doPDFs=doPDFs,
     fastsim=fastsim,
     signal=signal

@@ -57,13 +57,13 @@ echo "#!/bin/bash" > ${OUTNAME}
 echo "" >> ${OUTNAME}
 
 #keep track of jobs that have been checked
-joblist=""
 counter=0
+mkdir -p removed
 
 #search for "return value" in condor logs newer than TIME - denotes finished job
 #or "abort" - denotes removed job
 echo -n "Searching logs after $TIME..."
-IFS=$'\n' filelist=($(grep -m1 "return value\|abort" $(find . -name \*.condor -newermt "${TIME}"))); unset IFS
+readarray filelist < <(find . -maxdepth 1 -name \*.condor -newermt "${TIME}" -print0 | xargs -0 -n1 -P4 grep -l -m1 "SYSTEM_PERIODIC_REMOVE")
 filelistlen=${#filelist[@]}
 echo " found $filelistlen"
 for ((i=0; i < $filelistlen; i++)); do
@@ -73,41 +73,17 @@ for ((i=0; i < $filelistlen; i++)); do
 	#split filename and matched line from grep
 	IFS=':' read -r file line <<< "$fileline"; unset IFS
 	
-	#skip job if it finished successfully - return value 0
-	success=$(echo "$line" | fgrep -w "return value 0")
-	if [[ -n $success ]]; then
-		continue
-	fi
-	
 	#get JOBNAME from filename
 	base=$(echo $(basename ${file}) | rev | cut -d'_' -f1-1 --complement | rev)
 	
-	#skip job if it has already been checked
-	if (echo "$joblist" | fgrep -qw $base); then
-		continue
-	fi
-	
-	#check for newer logs that succeeded or are still running
-	newerfiles=$(find . -name ${base}_\*.condor -newer "${file}")
-	newerstatus=""
-	stillrunning=""
-	if [[ -n $newerfiles ]]; then
-		newerstatus=$(grep -lw "return value 0" ${newerfiles})
-		if [[ -z $newerstatus ]]; then
-			stillrunning=$(grep -L "return value\|abort" ${newerfiles})
-		fi
-	fi
-	
-	#if none were found, the job failed
-	if [[ -z $newerstatus && -z $stillrunning ]]; then
-		#optional: output return value for failed job as comment in resub script
-		#echo "#"$(grep -w "return value" ${file}) >> ${OUTNAME}
-		echo "condor_submit jobExecCondor_${base}.jdl" >> ${OUTNAME}
-		counter=$((counter+1))
-	fi
-	
-	#append jobname to list
-	joblist="${base} ${joblist}"
+	#move condor file to backup dir, remove empty stdout/stderr files
+	mv ${file} removed/${file}
+	rm $(basename ${file} .condor).stdout
+	rm $(basename ${file} .condor).stderr
+
+	#add job to resubmission list
+	echo "condor_submit jobExecCondor_${base}.jdl" >> ${OUTNAME}
+	counter=$((counter+1))
 done
 
 redraw_progress_bar $filelistlen $filelistlen 20

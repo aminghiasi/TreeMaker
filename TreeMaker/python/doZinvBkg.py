@@ -1,6 +1,6 @@
 import FWCore.ParameterSet.Config as cms
 
-def reclusterZinv(process, geninfo, residual, cleanedCandidates, suff):
+def reclusterZinv(process, geninfo, residual, cleanedCandidates, suff, fastsim):
     # do CHS for jet clustering
     cleanedCandidatesCHS = cms.EDFilter("CandPtrSelector",
         src = cleanedCandidates,
@@ -22,6 +22,7 @@ def reclusterZinv(process, geninfo, residual, cleanedCandidates, suff):
     from PhysicsTools.PatAlgos.tools.jetTools import addJetCollection
     jecLevels = ['L1FastJet', 'L2Relative', 'L3Absolute']
     if residual: jecLevels.append("L2L3Residual")
+    btagDiscs = ['pfCombinedInclusiveSecondaryVertexV2BJetTags','pfCombinedMVAV2BJetTags']
     addJetCollection(
        process,
        labelName = 'AK4PFCLEAN'+suff,
@@ -35,7 +36,9 @@ def reclusterZinv(process, geninfo, residual, cleanedCandidates, suff):
        #genJetCollection = cms.InputTag('slimmedGenJets'),
        genParticles = cms.InputTag('prunedGenParticles'), # likely needed for hadronFlavour()....
        jetCorrections = ('AK4PFchs', jecLevels, 'None'),
-       btagDiscriminators = ['pfCombinedInclusiveSecondaryVertexV2BJetTags'],
+       btagDiscriminators = btagDiscs,
+       muSource = cms.InputTag("slimmedMuons"),
+       elSource = cms.InputTag("slimmedElectrons")
     )
     # turn on/off GEN matching (different than hadronFlavour()?)
     getattr(process,'patJetsAK4PFCLEAN'+suff).addGenPartonMatch = cms.bool(False)
@@ -47,6 +50,7 @@ def reclusterZinv(process, geninfo, residual, cleanedCandidates, suff):
         cut = cms.string("pt>10.")
     )
     setattr(process,'reclusteredJets'+suff,reclusteredJets)
+    JetTagClean = cms.InputTag("reclusteredJets"+suff)
 
     # recalculate MET from cleaned candidates and reclustered jets
     postfix="clean"+suff
@@ -54,21 +58,11 @@ def reclusterZinv(process, geninfo, residual, cleanedCandidates, suff):
     runMetCorAndUncFromMiniAOD(
         process,
         isData=not geninfo, # controls gen met
-        jetCollUnskimmed="reclusteredJets"+suff,
-        jetColl='patJetsAK4PFCLEAN'+suff,
+        jetCollUnskimmed='patJetsAK4PFCLEAN'+suff,
         pfCandColl=cleanedCandidates.value(),
-        repro74X=True, # to recompute without reclustering
+        repro80X=True, # to recompute without reclustering
         postfix=postfix
     )
-    if not residual: #skip residuals for data if not used
-            getattr(process,"patPFMetT1T2Corr"+postfix).jetCorrLabelRes = cms.InputTag("L3Absolute")
-            getattr(process,"patPFMetT1T2SmearCorr"+postfix).jetCorrLabelRes = cms.InputTag("L3Absolute")
-            getattr(process,"patPFMetT2Corr"+postfix).jetCorrLabelRes = cms.InputTag("L3Absolute")
-            getattr(process,"patPFMetT2SmearCorr"+postfix).jetCorrLabelRes = cms.InputTag("L3Absolute")
-            getattr(process,"shiftedPatJetEnDown"+postfix).jetCorrLabelUpToL3Res = cms.InputTag("ak4PFCHSL1FastL2L3Corrector")
-            getattr(process,"shiftedPatJetEnUp"+postfix).jetCorrLabelUpToL3Res = cms.InputTag("ak4PFCHSL1FastL2L3Corrector")
-    if hasattr(process,"slimmedMETs"+postfix):
-        delattr(getattr(process,"slimmedMETs"+postfix),"caloMET")
     METTag = cms.InputTag('slimmedMETs'+postfix)
     
     # isolated tracks
@@ -116,22 +110,33 @@ def reclusterZinv(process, geninfo, residual, cleanedCandidates, suff):
     )
     setattr(process,"IsolatedPionTracksVetoClean"+suff,IsolatedPionTracksVetoClean)
 
-    process.ZinvClean += getattr(process,"IsolatedElectronTracksVetoClean"+suff)
-    process.ZinvClean += getattr(process,"IsolatedMuonTracksVetoClean"+suff)
-    process.ZinvClean += getattr(process,"IsolatedPionTracksVetoClean"+suff)
     process.TreeMaker2.VarsInt.extend(['IsolatedElectronTracksVetoClean'+suff+':isoTracks(isoElectronTracksclean'+suff+')'])
     process.TreeMaker2.VarsInt.extend(['IsolatedMuonTracksVetoClean'+suff+':isoTracks(isoMuonTracksclean'+suff+')'])
     process.TreeMaker2.VarsInt.extend(['IsolatedPionTracksVetoClean'+suff+':isoTracks(isoPionTracksclean'+suff+')'])
 
+    # skip all jet smearing for data
+    from TreeMaker.TreeMaker.JetDepot import JetDepot
+    doJERsmearing = geninfo
+    
+    if doJERsmearing:
+        # do central smearing and replace jet tag
+        process, JetTagClean = JetDepot(process,
+            JetTag=JetTagClean,
+            jecUncDir=0,
+            doSmear=doJERsmearing,
+            jerUncDir=0
+        )
+    
     # make the event variables
     from TreeMaker.TreeMaker.makeJetVars import makeJetVars
     process = makeJetVars(
         process,
-        sequence="ZinvClean",
-        JetTag = cms.InputTag("reclusteredJets"+suff),
+        JetTag = JetTagClean,
         suff=postfix,
         skipGoodJets=False,
         storeProperties=1,
+        geninfo=geninfo,
+        fastsim=fastsim
     )
 
     from TreeMaker.Utils.metdouble_cfi import metdouble
@@ -140,14 +145,11 @@ def reclusterZinv(process, geninfo, residual, cleanedCandidates, suff):
        JetTag = cms.InputTag('HTJets'+postfix)
     )
     setattr(process,"METclean"+suff,METclean)
-    process.ZinvClean += getattr(process,"METclean"+suff)
-    process.TreeMaker2.VarsDouble.extend(['METclean'+suff+':Pt(METPtclean'+suff+')','METclean'+suff+':Phi(METPhiclean'+suff+')'])
+    process.TreeMaker2.VarsDouble.extend(['METclean'+suff+':Pt(METclean'+suff+')','METclean'+suff+':Phi(METPhiclean'+suff+')'])
     
     return process
 
-def doZinvBkg(process,tagname,geninfo,residual):
-    process.ZinvClean = cms.Sequence()
-
+def doZinvBkg(process,tagname,geninfo,residual,fastsim):
     ## ----------------------------------------------------------------------------------------------
     ## Photons
     ## ----------------------------------------------------------------------------------------------
@@ -162,55 +164,56 @@ def doZinvBkg(process,tagname,geninfo,residual):
         genParCollection = cms.untracked.InputTag("prunedGenParticles"), 
         debug                  = cms.untracked.bool(False)
     )
-    process.ZinvClean += process.goodPhotons
     
     ##### add branches for photon studies
     process.TreeMaker2.VectorRecoCand.append("goodPhotons(Photons)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:isEB(photon_isEB)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:genMatched(photon_genMatched)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:hadTowOverEM(photon_hadTowOverEM)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:hasPixelSeed(photon_hasPixelSeed)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:passElectronVeto(photon_passElectronVeto)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:pfChargedIso(photon_pfChargedIso)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:pfChargedIsoRhoCorr(photon_pfChargedIsoRhoCorr)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:pfGammaIso(photon_pfGammaIso)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:pfGammaIsoRhoCorr(photon_pfGammaIsoRhoCorr)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:pfNeutralIso(photon_pfNeutralIso)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:pfNeutralIsoRhoCorr(photon_pfNeutralIsoRhoCorr)")
-    process.TreeMaker2.VectorDouble.append("goodPhotons:sigmaIetaIeta(photon_sigmaIetaIeta)")
-    process.TreeMaker2.VectorBool.append("goodPhotons:nonPrompt(photon_nonPrompt)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:isEB(Photons_isEB)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:genMatched(Photons_genMatched)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:hadTowOverEM(Photons_hadTowOverEM)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:hasPixelSeed(Photons_hasPixelSeed)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:passElectronVeto(Photons_passElectronVeto)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:pfChargedIso(Photons_pfChargedIso)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:pfChargedIsoRhoCorr(Photons_pfChargedIsoRhoCorr)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:pfGammaIso(Photons_pfGammaIso)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:pfGammaIsoRhoCorr(Photons_pfGammaIsoRhoCorr)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:pfNeutralIso(Photons_pfNeutralIso)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:pfNeutralIsoRhoCorr(Photons_pfNeutralIsoRhoCorr)")
+    process.TreeMaker2.VectorDouble.append("goodPhotons:sigmaIetaIeta(Photons_sigmaIetaIeta)")
+    process.TreeMaker2.VectorBool.append("goodPhotons:nonPrompt(Photons_nonPrompt)")
+    process.TreeMaker2.VectorBool.append("goodPhotons:fullID(Photons_fullID)")
+
+    ## add MadGraph-level deltaR between photon or Z and status 23 partons
+    if geninfo:
+        process.madMinPhotonDeltaR = cms.EDProducer("MinDeltaRDouble")
+        process.TreeMaker2.VarsDouble.extend(['madMinPhotonDeltaR:madMinPhotonDeltaR(madMinPhotonDeltaR)'])
+        process.TreeMaker2.VarsInt.extend([   'madMinPhotonDeltaR:madMinDeltaRStatus(madMinDeltaRStatus)'])
 
     from TreeMaker.Utils.zproducer_cfi import ZProducer
     process.makeTheZs = ZProducer.clone(
         ElectronTag = cms.InputTag('LeptonsNew:IdIsoElectron'),
         MuonTag     = cms.InputTag('LeptonsNew:IdIsoMuon')
     )
-    process.ZinvClean += process.makeTheZs
     process.TreeMaker2.VectorRecoCand.append("makeTheZs:ZCandidates")
 
     ###
     # do the new cleaning
     ###
-    from TreeMaker.TreeMaker.makeJetVars import makeJetVars
 
     # combine leptons
     process.selectedLeptons = cms.EDProducer("CandViewMerger",
         src = cms.VInputTag("LeptonsNew:IdIsoElectron","LeptonsNew:IdIsoMuon")
     )
-    process.ZinvClean += process.selectedLeptons
     
     # if there are no leptons in the event, just remove photons (GJet)
     # otherwise, just remove leptons (DY)
     process.selectedXons = cms.EDProducer("CandPtrPrefer",
         first = cms.InputTag("selectedLeptons"), second = cms.InputTag("goodPhotons")
     )
-    process.ZinvClean += process.selectedXons
     
     # do the removal
     process.cleanedCandidates =  cms.EDProducer("PackedCandPtrProjector",
         src = cms.InputTag("packedPFCandidates"), veto = cms.InputTag("selectedXons")
     )
-    process.ZinvClean += process.cleanedCandidates
     
     # make reclustered jets
     process = reclusterZinv(
@@ -218,9 +221,8 @@ def doZinvBkg(process,tagname,geninfo,residual):
         geninfo,
         residual,
         cms.InputTag("cleanedCandidates"),
-        ""
+        "",
+        fastsim
     )
-
-    process.AdditionalSequence += process.ZinvClean
     
     return process

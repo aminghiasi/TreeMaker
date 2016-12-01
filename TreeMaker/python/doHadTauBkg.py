@@ -1,81 +1,103 @@
 import FWCore.ParameterSet.Config as cms
 
-def makeJetVarsHadTau(process,sequence,JetTag,suff):
-    if hasattr(process,sequence):
-        theSequence = getattr(process,sequence)
-    else:
-        print "Unknown sequence: "+sequence
-        return
-
+def makeJetVarsHadTau(process,JetTag,suff,fastsim,geninfo,storeProperties=0):
     # clone GoodJetsProducer
     GoodJetsForHadTau = process.GoodJets.clone(
         JetTag = JetTag,
-        jetPtFilter = cms.double(0),
-        SaveAllJets = cms.bool(True),
+        jetPtFilter = cms.double(30),
+        invertJetPtFilter = cms.bool(True),
+        SaveAllJetsId = cms.bool(True),
+        SaveAllJetsPt = cms.bool(False), # save only jets *below* pt cut
         ExcludeLepIsoTrackPhotons = cms.bool(False),
     )
+    if fastsim: GoodJetsForHadTau.jetPtFilter = cms.double(20)
     setattr(process,"GoodJetsForHadTau"+suff,GoodJetsForHadTau)
-    theSequence += getattr(process,"GoodJetsForHadTau"+suff)
+    GoodJetsTag = cms.InputTag("GoodJetsForHadTau"+suff)
     
-    process.TreeMaker2.VectorRecoCand.extend(['GoodJetsForHadTau'+suff+'(slimJet'+suff+')'])
-    process.TreeMaker2.VectorBool.extend(['GoodJetsForHadTau'+suff+':JetIDMask(slimJet'+suff+'_slimJetID)'])
+    process.TreeMaker2.VectorRecoCand.extend(['GoodJetsForHadTau'+suff+'(SoftJets'+suff+')'])
+    process.TreeMaker2.VectorBool.extend(['GoodJetsForHadTau'+suff+':JetIDMask(SoftJets'+suff+'_ID)'])
+    
+    if storeProperties>0:
+        # make jet properties producer
+        from TreeMaker.Utils.jetproperties_cfi import jetproperties
+        JetsProperties = jetproperties.clone(
+            JetTag       = GoodJetsTag,
+            properties   = cms.vstring("jecFactor","jecUnc","bDiscriminatorCSV")
+        )
+        if geninfo:
+            JetsProperties.properties.extend(["jerFactor", "jerFactorUp","jerFactorDown"])
+        # provide extra info where necessary
+        JetsProperties.jecUnc = cms.vstring("jecUncHadTau")
+        JetsProperties.jerFactor = cms.vstring("jerFactorHadTau")
+        JetsProperties.jerFactorUp = cms.vstring("jerFactorUpHadTau")
+        JetsProperties.jerFactorDown = cms.vstring("jerFactorDownHadTau")
+        setattr(process,"HadTauJetsProperties"+suff,JetsProperties)
+        process.TreeMaker2.VectorDouble.extend(['HadTauJetsProperties:jecFactor(SoftJets'+suff+'_jecFactor)',
+                                                'HadTauJetsProperties:jecUnc(SoftJets'+suff+'_jecUnc)',
+                                                'HadTauJetsProperties:bDiscriminatorCSV(SoftJets'+suff+'_bDiscriminatorCSV)'])
+        if geninfo:
+            process.TreeMaker2.VectorDouble.extend(['HadTauJetsProperties:jerFactor(SoftJets'+suff+'_jerFactor)',
+                                                    'HadTauJetsProperties:jerFactorUp(SoftJets'+suff+'_jerFactorUp)',
+                                                    'HadTauJetsProperties:jerFactorDown(SoftJets'+suff+'_jerFactorDown)'])
     
     return process
 
-def doHadTauBkg(process,geninfo,residual,JetTag):
-    process.load("RecoJets.JetProducers.ak4PFJets_cfi")
-    from JetMETCorrections.Configuration.JetCorrectionServices_cff import ak4PFCHSL1FastL2L3,ak4PFCHSL1Fastjet,ak4PFCHSL2Relative,ak4PFCHSL3Absolute
+def doHadTauBkg(process,geninfo,residual,JetTag,fastsim,recluster):
+    if recluster:
+        print "Reclustering for hadtau"
+        
+        process.load("RecoJets.JetProducers.ak4PFJets_cfi")
+        from JetMETCorrections.Configuration.JetCorrectionServices_cff import ak4PFCHSL1FastL2L3,ak4PFCHSL1Fastjet,ak4PFCHSL2Relative,ak4PFCHSL3Absolute
 
-    #do projections
-    process.pfCHS = cms.EDFilter("CandPtrSelector", src = cms.InputTag("packedPFCandidates"), cut = cms.string("fromPV"))
-    # no idea while doArea is false by default, but it's True in RECO so we have to set it
-    process.ak4PFJetsCHS = process.ak4PFJets.clone(src = 'pfCHS', doAreaFastjet = True)
+        #do projections
+        process.pfCHS = cms.EDFilter("CandPtrSelector", src = cms.InputTag("packedPFCandidates"), cut = cms.string("fromPV"))
+        # no idea while doArea is false by default, but it's True in RECO so we have to set it
+        process.ak4PFJetsCHS = process.ak4PFJets.clone(src = 'pfCHS', doAreaFastjet = True)
 
-    if geninfo:
-        process.load("RecoJets.JetProducers.ak4GenJets_cfi")
-        process.ak4GenJets = process.ak4GenJets.clone(src = 'packedGenParticles', rParam = 0.4)
+        if geninfo:
+            process.load("RecoJets.JetProducers.ak4GenJets_cfi")
+            process.ak4GenJets = process.ak4GenJets.clone(src = 'packedGenParticles', rParam = 0.4)
 
-    from PhysicsTools.PatAlgos.tools.jetTools import addJetCollection
-    jetCorrectionLevels = ('AK4PFchs', ['L1FastJet', 'L2Relative', 'L3Absolute'], 'Type-2')
-    if residual: jetCorrectionLevels = ('AK4PFchs', ['L1FastJet', 'L2Relative', 'L3Absolute', 'L2L3Residual'], 'Type-2')
-    addJetCollection(
-        process,
-        postfix            = "",
-        labelName          = 'AK4PFCHS',
-        jetSource          = cms.InputTag('ak4PFJetsCHS'),
-        pfCandidates       = cms.InputTag('packedPFCandidates'),
-        pvSource           = cms.InputTag('offlineSlimmedPrimaryVertices'),  # 74x
-        svSource           = cms.InputTag('slimmedSecondaryVertices'),       # 74x
-        elSource           = cms.InputTag('slimmedElectrons'),
-        muSource           = cms.InputTag('slimmedMuons'),
-        jetCorrections     = jetCorrectionLevels,
-        btagDiscriminators = [ 'pfCombinedInclusiveSecondaryVertexV2BJetTags' ],  # 74x
-        genJetCollection   = cms.InputTag('ak4GenJets'),
-        genParticles       = cms.InputTag('prunedGenParticles'),
-        algo               = 'AK',
-        rParam             = 0.4
-    )
+        from PhysicsTools.PatAlgos.tools.jetTools import addJetCollection
+        jetCorrectionLevels = ('AK4PFchs', ['L1FastJet', 'L2Relative', 'L3Absolute'], 'Type-2')
+        if residual: jetCorrectionLevels = ('AK4PFchs', ['L1FastJet', 'L2Relative', 'L3Absolute', 'L2L3Residual'], 'Type-2')
+        addJetCollection(
+            process,
+            postfix            = "",
+            labelName          = 'AK4PFCHS',
+            jetSource          = cms.InputTag('ak4PFJetsCHS'),
+            pfCandidates       = cms.InputTag('packedPFCandidates'),
+            pvSource           = cms.InputTag('offlineSlimmedPrimaryVertices'),  # 74x
+            svSource           = cms.InputTag('slimmedSecondaryVertices'),       # 74x
+            elSource           = cms.InputTag('slimmedElectrons'),
+            muSource           = cms.InputTag('slimmedMuons'),
+            jetCorrections     = jetCorrectionLevels,
+            btagDiscriminators = [ 'pfCombinedInclusiveSecondaryVertexV2BJetTags' ],  # 74x
+            genJetCollection   = cms.InputTag('ak4GenJets'),
+            genParticles       = cms.InputTag('prunedGenParticles'),
+            algo               = 'AK',
+            rParam             = 0.4
+        )
 
-    # adjust MC matching
-    process.patJetsAK4PFCHS.getJetMCFlavour   = False
-    process.patJetsAK4PFCHS.addGenPartonMatch = False
-    process.patJetsAK4PFCHS.addGenJetMatch    = False
-    if geninfo:
-        process.patJetsAK4PFCHS.getJetMCFlavour   = True
-        process.patJetsAK4PFCHS.addGenPartonMatch = True
-        process.patJetsAK4PFCHS.addGenJetMatch    = True
-        process.patJetGenJetMatchAK4PFCHS.matched = "ak4GenJets"
-        process.patJetPartonMatchAK4PFCHS.matched = "prunedGenParticles"
-        process.patJetPartons.particles           = "prunedGenParticles"
-        process.patJetPartons.skipFirstN          = cms.uint32(0) # do not skip first 6 particles, we already pruned some!
-        process.patJetPartons.acceptNoDaughters   = cms.bool(True) # as we drop intermediate stuff, we need to accept quarks with no siblings
+        # adjust MC matching
+        process.patJetsAK4PFCHS.getJetMCFlavour   = False
+        process.patJetsAK4PFCHS.addGenPartonMatch = False
+        process.patJetsAK4PFCHS.addGenJetMatch    = False
+        if geninfo:
+            process.patJetsAK4PFCHS.getJetMCFlavour   = True
+            process.patJetsAK4PFCHS.addGenPartonMatch = True
+            process.patJetsAK4PFCHS.addGenJetMatch    = True
+            process.patJetGenJetMatchAK4PFCHS.matched = "ak4GenJets"
+            process.patJetPartonMatchAK4PFCHS.matched = "prunedGenParticles"
+            process.patJetPartons.particles           = "prunedGenParticles"
+            process.patJetPartons.skipFirstN          = cms.uint32(0) # do not skip first 6 particles, we already pruned some!
+            process.patJetPartons.acceptNoDaughters   = cms.bool(True) # as we drop intermediate stuff, we need to accept quarks with no siblings
 
-    # adjust PV used for Jet Corrections
-    process.patJetCorrFactorsAK4PFCHS.primaryVertices = "offlineSlimmedPrimaryVertices"
+        # adjust PV used for Jet Corrections
+        process.patJetCorrFactorsAK4PFCHS.primaryVertices = "offlineSlimmedPrimaryVertices"
 
-    # recreate tracks and pv for btagging
-    process.load('PhysicsTools.PatAlgos.slimming.unpackedTracksAndVertices_cfi')
-    process.options.allowUnscheduled = cms.untracked.bool(True) # in case we forgot something :)
+        # recreate tracks and pv for btagging
+        process.load('PhysicsTools.PatAlgos.slimming.unpackedTracksAndVertices_cfi')
 
     from TreeMaker.Utils.jetsforhadtauproducer_cfi import JetsForHadTauProducer 
     # this save the jets without considering jet Id. But, also saves jetId in a vector.
@@ -84,45 +106,61 @@ def doHadTauBkg(process,geninfo,residual,JetTag):
         JetTag                 = JetTag,
         reclusJetTag           = cms.InputTag('patJetsAK4PFCHS'),
         maxJetEta              = cms.double(5.0), 
-        MCflag                 = cms.bool(False)
+        MCflag                 = cms.bool(geninfo),
+        useReclusteredJets     = cms.bool(recluster),
+        requireLeptonMatch     = cms.bool(False)
     )
-    if geninfo:
-        process.JetsForHadTau.MCflag = cms.bool(True)
-    process.AdditionalSequence += process.JetsForHadTau
-    
-    process = makeJetVarsHadTau(process,
-        sequence="AdditionalSequence",
-        JetTag=cms.InputTag("JetsForHadTau"),
-        suff='',
-    )
-    
+    JetTagHadTau = cms.InputTag("JetsForHadTau")
+
     # jet uncertainty variations
     from TreeMaker.Utils.jetuncertainty_cfi import JetUncertaintyProducer
     
-    #JEC unc up
-    process.JetsForHadTauJECup = JetUncertaintyProducer.clone(
-        JetTag = cms.InputTag("JetsForHadTau"),
-        jecUncDir = cms.int32(1)
+    # JEC uncertainty
+    process.jecUncHadTau = JetUncertaintyProducer.clone(
+        JetTag = JetTagHadTau,
+        jecUncDir = cms.int32(0)
     )
-    process.AdditionalSequence += process.JetsForHadTauJECup
-    #get the JEC factor and unc from here
-    process.TreeMaker2.VectorDouble.extend(['JetsForHadTauJECup:jecFactor(slimJet_jecFactor)','JetsForHadTauJECup:jecUnc(slimJet_jecUnc)'])
+    _infosToAddHadTau = ['jecUncHadTau']
+    if geninfo:
+        # JER factors - central, up, down
+        from TreeMaker.Utils.smearedpatjet_cfi import SmearedPATJetProducer
+        process.jerFactorHadTau = SmearedPATJetProducer.clone(
+            src = JetTagHadTau,
+            variation = cms.int32(0),
+            store_factor = cms.bool(True)
+        )
+        process.jerFactorUpHadTau = SmearedPATJetProducer.clone(
+            src = JetTagHadTau,
+            variation = cms.int32(1),
+            store_factor = cms.bool(True)
+        )
+        process.jerFactorDownHadTau = SmearedPATJetProducer.clone(
+            src = JetTagHadTau,
+            variation = cms.int32(-1),
+            store_factor = cms.bool(True)
+        )
+        _infosToAddHadTau.extend(['jerFactorHadTau','jerFactorUpHadTau','jerFactorDownHadTau'])
+    # add userfloats & update tag
+    from TreeMaker.TreeMaker.addJetInfo import addJetInfo
+    process, JetTagHadTau = addJetInfo(process, JetTagHadTau, _infosToAddHadTau, [])
+    
+    # skip all jet smearing and uncertainties for data
+    from TreeMaker.TreeMaker.JetDepot import JetDepot
+    if geninfo:        
+        # do central smearing and replace jet tag
+        process, JetTagHadTau = JetDepot(process,
+            JetTag=JetTagHadTau,
+            jecUncDir=0,
+            doSmear=True,
+            jerUncDir=0
+        )
+    
     process = makeJetVarsHadTau(process,
-                          sequence="AdditionalSequence",
-                          JetTag=cms.InputTag("JetsForHadTauJECup"),
-                          suff='JECup',
-    )
-
-    #JEC unc down
-    process.JetsForHadTauJECdown = JetUncertaintyProducer.clone(
-        JetTag = cms.InputTag("JetsForHadTau"),
-        jecUncDir = cms.int32(-1)
-    )
-    process.AdditionalSequence += process.JetsForHadTauJECdown
-    process = makeJetVarsHadTau(process,
-                          sequence="AdditionalSequence",
-                          JetTag=cms.InputTag("JetsForHadTauJECdown"),
-                          suff='JECdown',
+        JetTag=JetTagHadTau,
+        suff='',
+        fastsim=fastsim,
+        geninfo=geninfo,
+        storeProperties=1
     )
     
     return process
